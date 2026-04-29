@@ -1,4 +1,5 @@
 import os
+import time
 import hashlib
 import hmac
 import base64
@@ -8,14 +9,30 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, PreCheckoutQueryHandler, filters
 from telegram.constants import ParseMode
 
-# ========== التوكن من متغيرات البيئة (آمن) ==========
-TOKEN = os.environ.get("BOT_TOKEN")
+# ========== طريقة مضاعفة لقراءة التوكن (لن تفشل أبداً) ==========
+BOT_TOKEN = None
 
-# ========== المفتاح السري (نفس الموجود في تطبيقك) ==========
+# الطريقة الأولى: من متغيرات البيئة
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+
+# الطريقة الثانية (احتياطي): إذا لم يجده، حاول مرة أخرى بعد ثانية
+if not BOT_TOKEN:
+    print("⚠️ لم أجد BOT_TOKEN في المتغيرات، أنتظر ثانية وأحاول مرة أخرى...")
+    time.sleep(1)
+    BOT_TOKEN = os.environ.get("BOT_TOKEN")
+
+# إذا لم يجده بعد كل هذا، أبلغ عن الخطأ
+if not BOT_TOKEN:
+    print("❌ فشل: لم أجد BOT_TOKEN. تأكد من إضافته في Variables")
+    exit(1)
+
+print(f"✅ تم العثور على التوكن بنجاح (يبدأ بـ: {BOT_TOKEN[:10]}...)")
+
+# ========== المفتاح السري ==========
 SECRET_KEY = b'Kh@l3d$MyCl1n!c#2024*S3cur3'
 
 def generate_activation_key(lock_code: str) -> str:
-    """توليد مفتاح التفعيل بنفس خوارزمية التطبيق"""
+    """توليد مفتاح التفعيل"""
     try:
         h = hmac.new(SECRET_KEY, lock_code.encode('utf-8'), hashlib.sha256)
         b64 = base64.b64encode(h.digest()).decode('utf-8')
@@ -47,7 +64,7 @@ async def buy(update: Update, context):
     await context.bot.send_invoice(
         chat_id=update.effective_chat.id,
         title="🔑 تفعيل ClinicKey",
-        description="مفتاح تفعيل لبرنامج العيادات",
+        description="مفتاح تفعيل لبرنامج إدارة العيادات",
         payload="key_" + str(update.effective_user.id),
         provider_token="",
         currency="XTR",
@@ -73,26 +90,31 @@ async def handle_lock_code(update: Update, context):
     
     activation_key = generate_activation_key(lock_code)
     if activation_key == "INVALID":
-        await update.message.reply_text("❌ خطأ في التوليد")
+        await update.message.reply_text("❌ خطأ في التوليد، تأكد من كود القفل")
         return
     
     qr_image = generate_qr(activation_key)
     await update.message.reply_photo(
         photo=qr_image,
-        caption=f"✅ مفتاح التفعيل: `{activation_key}`",
+        caption=f"✅ *تم التفعيل بنجاح!*\n\n🔑 *المفتاح:* `{activation_key}`",
         parse_mode=ParseMode.MARKDOWN
     )
     context.user_data['paid'] = False
 
+async def cancel(update: Update, context):
+    context.user_data['paid'] = False
+    await update.message.reply_text("❌ تم الإلغاء")
+
 # ========== تشغيل البوت ==========
 def main():
-    app = Application.builder().token(TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("buy", buy))
+    app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_lock_code))
-    print("✅ البوت شغال...")
+    print("✅ البوت شغال وسيستمع للأوامر...")
     app.run_polling()
 
 if __name__ == "__main__":
